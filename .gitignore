@@ -1,0 +1,71 @@
+# Flutter dependencies
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.iml
+
+# Fuchsia projects
+.fuchsia/
+
+# Generated files
+*.dart_tool/
+*.packages
+*.flutter-plugins
+*.flutter-plugins-dependencies
+*.flutter-plugins-dependencies.lock
+*.flutter-versions
+.buildlog
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.flutter-plugins-dependencies.lock
+.generated
+*.lock
+build/
+# Symbols file
+app.*.symbols
+
+# iOS
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/FlutterPluginRegistrant/
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Runner.xcworkspace/
+**/ios/Podfile.lock
+
+# Android
+**/android/.gradle/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/local.properties
+**/android/.idea/
+**/android/app/src/debug/
+**/android/app/src/profile/
+**/android/app/src/release/
+**/android/gradle.properties
+**/android/gradle/
+**/android/build/
+**/android/captures/
+**/android/app/*.keystore
+**/android/settings.gradle
+**/android/gradlew*
+**/android/gradle/wrapper/gradle-wrapper.jar
+**/android/gradle/wrapper/gradle-wrapper.properties
+
+# Visual Studio Code
+.vscode/
+.settings/
+
+# Local env files
+.env
+.env.*

@@ -105,7 +105,6 @@ class _GamePageState extends State<GamePage> {
       body: Column(
         children: [
           Expanded(
-
             child: ListView(
               children: [
                 if (_accelerometerData != null)
@@ -122,15 +121,6 @@ class _GamePageState extends State<GamePage> {
                     title: Text(message),
                   ),
               ],
-
-            child: ListView.builder(
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                return ListTile(
-                  title: Text(_messages[index]),
-                );
-              },
-
             ),
           ),
           Padding(

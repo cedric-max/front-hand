@@ -75,6 +75,7 @@ class GameSetupPage extends StatefulWidget {
 class _GameSetupPageState extends State<GameSetupPage> {
   final TextEditingController _serverAddressController =
       TextEditingController();
+  final TextEditingController _playerNameController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -96,21 +97,34 @@ class _GameSetupPageState extends State<GameSetupPage> {
               ),
             ),
             const SizedBox(height: 20),
+            TextField(
+              controller: _playerNameController,
+              decoration: const InputDecoration(
+                labelText: 'Enter Player Name',
+                hintText: 'e.g., Player1',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () {
                 final serverAddress = _serverAddressController.text;
-                if (serverAddress.isNotEmpty) {
+                final playerName = _playerNameController.text;
+                if (serverAddress.isNotEmpty && playerName.isNotEmpty) {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) =>
-                          GamePage(serverAddress: serverAddress),
+                      builder: (context) => GamePage(
+                        serverAddress: serverAddress,
+                        playerName: playerName,
+                      ),
                     ),
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                        content: Text('Please enter a server address')),
+                        content: Text(
+                            'Please enter both server address and player name')),
                   );
                 }
               },
@@ -125,6 +139,7 @@ class _GameSetupPageState extends State<GameSetupPage> {
   @override
   void dispose() {
     _serverAddressController.dispose();
+    _playerNameController.dispose();
     super.dispose();
   }
 }

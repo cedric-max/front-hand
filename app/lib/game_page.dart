@@ -3,11 +3,17 @@ import 'package:sensors_plus/sensors_plus.dart';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:geolocator/geolocator.dart';
+import 'dart:math';
 
 class GamePage extends StatefulWidget {
   final String serverAddress;
+  final String playerName;
 
-  const GamePage({Key? key, required this.serverAddress}) : super(key: key);
+  const GamePage({
+    Key? key,
+    required this.serverAddress,
+    required this.playerName,
+  }) : super(key: key);
 
   @override
   _GamePageState createState() => _GamePageState();
@@ -26,6 +32,10 @@ class _GamePageState extends State<GamePage> {
   String _instruction = 'En attente des instructions...';
   String _statusMessage = 'Préparez-vous...';
   bool _isStable = true;
+  int _currentRound = 0;
+  int _score = 0;
+  bool _gameStarted = false;
+  List<Map<String, dynamic>> _players = [];
 
   @override
   void initState() {
@@ -40,12 +50,14 @@ class _GamePageState extends State<GamePage> {
       setState(() {
         _accelerometerData = {'x': event.x, 'y': event.y, 'z': event.z};
       });
+      _checkStability();
     });
 
     _gyroscopeSubscription = gyroscopeEvents.listen((event) {
       setState(() {
         _gyroscopeData = {'x': event.x, 'y': event.y, 'z': event.z};
       });
+      _checkStability();
     });
   }
 
@@ -82,7 +94,7 @@ class _GamePageState extends State<GamePage> {
 
     final locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
+      distanceFilter: 5,
     );
 
     _positionStreamSubscription =
@@ -91,6 +103,7 @@ class _GamePageState extends State<GamePage> {
       setState(() {
         _currentPosition = position;
       });
+      _checkMovement();
     });
   }
 
@@ -105,6 +118,7 @@ class _GamePageState extends State<GamePage> {
         _statusMessage = 'Connecté au serveur';
       });
       _startSendingData();
+      socket.emit('join_game', {'playerName': widget.playerName});
     });
 
     socket.on('message', (data) {
@@ -115,14 +129,17 @@ class _GamePageState extends State<GamePage> {
 
     socket.on('start_game', (_) {
       setState(() {
+        _gameStarted = true;
         _statusMessage = 'Le jeu a commencé';
       });
     });
 
-    socket.on('new_instruction', (data) {
+    socket.on('new_round', (data) {
       setState(() {
-        _instruction = data['instruction'];
-        _statusMessage = 'Suivez les instructions';
+        _currentRound = data['round_actuel'];
+        _instruction = data['position'];
+        _players = List<Map<String, dynamic>>.from(data['joueurs']);
+        _statusMessage = 'Nouvelle manche: $_currentRound';
         _isStable = true;
       });
     });
@@ -133,9 +150,12 @@ class _GamePageState extends State<GamePage> {
       });
     });
 
-    socket.on('end_game', (_) {
+    socket.on('end_game', (data) {
       setState(() {
+        _gameStarted = false;
+        _players = List<Map<String, dynamic>>.from(data['joueurs']);
         _statusMessage = 'Le jeu est terminé';
+        _showGameOverDialog(data['perdant']);
       });
     });
 
@@ -172,11 +192,74 @@ class _GamePageState extends State<GamePage> {
     _dataSendTimer?.cancel();
   }
 
+  void _checkStability() {
+    if (!_gameStarted) return;
+
+    double accelerationMagnitude = sqrt(pow(_accelerometerData['x']!, 2) +
+        pow(_accelerometerData['y']!, 2) +
+        pow(_accelerometerData['z']!, 2));
+
+    double gyroscopeMagnitude = sqrt(pow(_gyroscopeData['x']!, 2) +
+        pow(_gyroscopeData['y']!, 2) +
+        pow(_gyroscopeData['z']!, 2));
+
+    bool newIsStable = accelerationMagnitude < 10.5 && gyroscopeMagnitude < 0.1;
+
+    if (newIsStable != _isStable) {
+      setState(() {
+        _isStable = newIsStable;
+      });
+
+      if (!_isStable) {
+        socket.emit(
+            'player_moved', {'player': widget.playerName, 'stable': false});
+      }
+    }
+  }
+
+  void _checkMovement() {
+    if (!_gameStarted || _currentPosition == null) return;
+
+    if (_currentPosition!.speed > 0.5) {
+      socket.emit('player_moved', {'player': widget.playerName, 'moved': true});
+    }
+  }
+
+  void _showGameOverDialog(String perdant) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Game Over'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Le perdant: $perdant'),
+              const SizedBox(height: 10),
+              Text('Scores:'),
+              ..._players.map(
+                  (player) => Text('${player['nom']}: ${player['score']}')),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('OK'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Return to the welcome page
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    double bubbleX =
-        _accelerometerData['x']! * 20; // Scaling factor to adjust sensitivity
-    double bubbleY = _accelerometerData['y']! * 20;
+    double bubbleX = _accelerometerData['x']! * 10;
+    double bubbleY = _accelerometerData['y']! * 10;
 
     return Scaffold(
       appBar: AppBar(
@@ -190,10 +273,11 @@ class _GamePageState extends State<GamePage> {
               children: [
                 Text(
                   _instruction,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: 20),
+                const SizedBox(height: 20),
                 Text(
                   _statusMessage,
                   style: TextStyle(
@@ -201,6 +285,18 @@ class _GamePageState extends State<GamePage> {
                       color: _isStable ? Colors.green : Colors.red),
                   textAlign: TextAlign.center,
                 ),
+                const SizedBox(height: 20),
+                Text(
+                  'Round: $_currentRound',
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Scores:',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                ..._players.map(
+                    (player) => Text('${player['nom']}: ${player['score']}')),
               ],
             ),
           ),
@@ -216,25 +312,15 @@ class _GamePageState extends State<GamePage> {
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.black, width: 2),
                     ),
-                    child: Center(
-                      child: Container(
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(
-                          color: _isStable ? Colors.green : Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
                   ),
                   Positioned(
-                    left: 100 + bubbleX - 10,
-                    top: 100 - bubbleY - 10,
+                    left: 100 + bubbleX,
+                    top: 100 - bubbleY,
                     child: Container(
                       width: 20,
                       height: 20,
                       decoration: BoxDecoration(
-                        color: Colors.blue,
+                        color: _isStable ? Colors.green : Colors.red,
                         shape: BoxShape.circle,
                       ),
                     ),

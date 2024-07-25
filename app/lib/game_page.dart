@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+
+import 'package:sensors_plus/sensors_plus.dart';
+import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+
+import 'models/accelerometer_data.dart';
+import 'models/gyroscope_data.dart';
+
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
-import 'dart:async';
 
 class GamePage extends StatefulWidget {
   final String serverAddress;
@@ -15,12 +21,34 @@ class GamePage extends StatefulWidget {
 
 class _GamePageState extends State<GamePage> {
   late IO.Socket socket;
+  late StreamSubscription _accelerometerSubscription;
+  late StreamSubscription _gyroscopeSubscription;
+
+  AccelerometerData? _accelerometerData;
+  GyroscopeData? _gyroscopeData;
+
   List<String> _messages = [];
 
   @override
   void initState() {
     super.initState();
     _connectToServer();
+    _initializeSensorListeners();
+  }
+
+  void _initializeSensorListeners() {
+    _accelerometerSubscription = accelerometerEvents.listen((event) {
+      setState(() {
+        _accelerometerData =
+            AccelerometerData(x: event.x, y: event.y, z: event.z);
+      });
+    });
+
+    _gyroscopeSubscription = gyroscopeEvents.listen((event) {
+      setState(() {
+        _gyroscopeData = GyroscopeData(x: event.x, y: event.y, z: event.z);
+      });
+    });
   }
 
   void _connectToServer() {
@@ -77,6 +105,24 @@ class _GamePageState extends State<GamePage> {
       body: Column(
         children: [
           Expanded(
+
+            child: ListView(
+              children: [
+                if (_accelerometerData != null)
+                  ListTile(
+                    title:
+                        Text('Accelerometer: ${_accelerometerData.toString()}'),
+                  ),
+                if (_gyroscopeData != null)
+                  ListTile(
+                    title: Text('Gyroscope: ${_gyroscopeData.toString()}'),
+                  ),
+                for (var message in _messages)
+                  ListTile(
+                    title: Text(message),
+                  ),
+              ],
+
             child: ListView.builder(
               itemCount: _messages.length,
               itemBuilder: (context, index) {
@@ -84,6 +130,7 @@ class _GamePageState extends State<GamePage> {
                   title: Text(_messages[index]),
                 );
               },
+
             ),
           ),
           Padding(
@@ -116,6 +163,8 @@ class _GamePageState extends State<GamePage> {
 
   @override
   void dispose() {
+    _accelerometerSubscription.cancel();
+    _gyroscopeSubscription.cancel();
     socket.disconnect();
     socket.dispose();
     super.dispose();

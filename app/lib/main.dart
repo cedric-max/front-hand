@@ -42,7 +42,7 @@ class WelcomePage extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 20),
               child: Text(
-                'Hold your phone steady and follow the instructions to win!',
+                'Enter the server address to start the game.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16),
               ),
@@ -56,7 +56,7 @@ class WelcomePage extends StatelessWidget {
                       builder: (context) => const GameSetupPage()),
                 );
               },
-              child: const Text('Start Game'),
+              child: const Text('Enter Server Address'),
             ),
           ],
         ),

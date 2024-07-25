@@ -1,14 +1,8 @@
 import 'package:flutter/material.dart';
-
 import 'package:sensors_plus/sensors_plus.dart';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-
-import 'models/accelerometer_data.dart';
-import 'models/gyroscope_data.dart';
-
 import 'package:geolocator/geolocator.dart';
-import 'package:vibration/vibration.dart';
 
 class GamePage extends StatefulWidget {
   final String serverAddress;
@@ -23,30 +17,79 @@ class _GamePageState extends State<GamePage> {
   late IO.Socket socket;
   late StreamSubscription _accelerometerSubscription;
   late StreamSubscription _gyroscopeSubscription;
+  late StreamSubscription<Position> _positionStreamSubscription;
+  Timer? _dataSendTimer;
 
-  AccelerometerData? _accelerometerData;
-  GyroscopeData? _gyroscopeData;
-
-  List<String> _messages = [];
+  Map<String, double> _accelerometerData = {'x': 0.0, 'y': 0.0, 'z': 0.0};
+  Map<String, double> _gyroscopeData = {'x': 0.0, 'y': 0.0, 'z': 0.0};
+  Position? _currentPosition;
+  String _instruction = 'En attente des instructions...';
+  String _statusMessage = 'Préparez-vous...';
+  bool _isStable = true;
 
   @override
   void initState() {
     super.initState();
     _connectToServer();
     _initializeSensorListeners();
+    _initializeGPS();
   }
 
   void _initializeSensorListeners() {
     _accelerometerSubscription = accelerometerEvents.listen((event) {
       setState(() {
-        _accelerometerData =
-            AccelerometerData(x: event.x, y: event.y, z: event.z);
+        _accelerometerData = {'x': event.x, 'y': event.y, 'z': event.z};
       });
     });
 
     _gyroscopeSubscription = gyroscopeEvents.listen((event) {
       setState(() {
-        _gyroscopeData = GyroscopeData(x: event.x, y: event.y, z: event.z);
+        _gyroscopeData = {'x': event.x, 'y': event.y, 'z': event.z};
+      });
+    });
+  }
+
+  void _initializeGPS() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() {
+        _statusMessage = 'Les services de localisation sont désactivés.';
+      });
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() {
+          _statusMessage = 'Les permissions de localisation sont refusées.';
+        });
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      setState(() {
+        _statusMessage =
+            'Les permissions de localisation sont définitivement refusées.';
+      });
+      return;
+    }
+
+    final locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10,
+    );
+
+    _positionStreamSubscription =
+        Geolocator.getPositionStream(locationSettings: locationSettings)
+            .listen((Position position) {
+      setState(() {
+        _currentPosition = position;
       });
     });
   }
@@ -58,92 +101,146 @@ class _GamePageState extends State<GamePage> {
     });
 
     socket.onConnect((_) {
-      print('Connected to server');
       setState(() {
-        _messages.add('Connected to server');
+        _statusMessage = 'Connecté au serveur';
       });
+      _startSendingData();
     });
 
     socket.on('message', (data) {
       setState(() {
-        _messages.add('${data['clientName']}: ${data['text']}');
+        _statusMessage = '${data['clientName']}: ${data['text']}';
       });
     });
 
-    socket.on('player_joined', (data) {
+    socket.on('start_game', (_) {
       setState(() {
-        _messages.add('${data['name']} has joined the game');
+        _statusMessage = 'Le jeu a commencé';
       });
     });
 
-    socket.on('player_left', (data) {
+    socket.on('new_instruction', (data) {
       setState(() {
-        _messages.add('${data['name']} has left the game');
+        _instruction = data['instruction'];
+        _statusMessage = 'Suivez les instructions';
+        _isStable = true;
+      });
+    });
+
+    socket.on('player_moved', (data) {
+      setState(() {
+        _statusMessage = '${data['player']} a bougé !';
+      });
+    });
+
+    socket.on('end_game', (_) {
+      setState(() {
+        _statusMessage = 'Le jeu est terminé';
       });
     });
 
     socket.onDisconnect((_) {
-      print('Disconnected from server');
       setState(() {
-        _messages.add('Disconnected from server');
+        _statusMessage = 'Déconnecté du serveur';
       });
+      _stopSendingData();
     });
 
     socket.connect();
   }
 
-  void _sendMessage(String message) {
-    socket.emit('message', message);
+  void _startSendingData() {
+    _dataSendTimer = Timer.periodic(Duration(milliseconds: 100), (timer) {
+      if (_accelerometerData.isNotEmpty &&
+          _gyroscopeData.isNotEmpty &&
+          _currentPosition != null) {
+        socket.emit('sensor_data', {
+          'accelerometer': _accelerometerData,
+          'gyroscope': _gyroscopeData,
+          'gps': {
+            'latitude': _currentPosition!.latitude,
+            'longitude': _currentPosition!.longitude,
+            'altitude': _currentPosition!.altitude,
+            'speed': _currentPosition!.speed,
+          }
+        });
+      }
+    });
+  }
+
+  void _stopSendingData() {
+    _dataSendTimer?.cancel();
   }
 
   @override
   Widget build(BuildContext context) {
+    double bubbleX =
+        _accelerometerData['x']! * 20; // Scaling factor to adjust sensitivity
+    double bubbleY = _accelerometerData['y']! * 20;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Stable Hand Game'),
       ),
       body: Column(
         children: [
-          Expanded(
-            child: ListView(
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
               children: [
-                if (_accelerometerData != null)
-                  ListTile(
-                    title:
-                        Text('Accelerometer: ${_accelerometerData.toString()}'),
-                  ),
-                if (_gyroscopeData != null)
-                  ListTile(
-                    title: Text('Gyroscope: ${_gyroscopeData.toString()}'),
-                  ),
-                for (var message in _messages)
-                  ListTile(
-                    title: Text(message),
-                  ),
+                Text(
+                  _instruction,
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                SizedBox(height: 20),
+                Text(
+                  _statusMessage,
+                  style: TextStyle(
+                      fontSize: 20,
+                      color: _isStable ? Colors.green : Colors.red),
+                  textAlign: TextAlign.center,
+                ),
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: () {
-                    _sendMessage('Player action');
-                  },
-                  child: const Text('Send Action'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const GPSPage()),
-                    );
-                  },
-                  child: const Text('Open GPS'),
-                ),
-              ],
+          Expanded(
+            child: Center(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: 200,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.black, width: 2),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: _isStable ? Colors.green : Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 100 + bubbleX - 10,
+                    top: 100 - bubbleY - 10,
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -155,133 +252,10 @@ class _GamePageState extends State<GamePage> {
   void dispose() {
     _accelerometerSubscription.cancel();
     _gyroscopeSubscription.cancel();
+    _positionStreamSubscription.cancel();
     socket.disconnect();
     socket.dispose();
+    _stopSendingData();
     super.dispose();
-  }
-}
-
-class GPSPage extends StatefulWidget {
-  const GPSPage({Key? key}) : super(key: key);
-
-  @override
-  _GPSPageState createState() => _GPSPageState();
-}
-
-class _GPSPageState extends State<GPSPage> {
-  Position? _currentPosition;
-  String _locationMessage =
-      "Appuyez sur le bouton pour obtenir la localisation";
-  late StreamSubscription<Position> _positionStreamSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkLocationPermission();
-  }
-
-  Future<void> _checkLocationPermission() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() {
-        _locationMessage = 'Les services de localisation sont désactivés.';
-      });
-      return;
-    }
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() {
-          _locationMessage = 'Les permissions de localisation sont refusées.';
-        });
-        return;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      setState(() {
-        _locationMessage =
-            'Les permissions de localisation sont définitivement refusées.';
-      });
-      return;
-    }
-
-    _startLocationUpdates();
-  }
-
-  void _startLocationUpdates() {
-    final locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
-    );
-
-    _positionStreamSubscription =
-        Geolocator.getPositionStream(locationSettings: locationSettings)
-            .listen((Position position) {
-      setState(() {
-        _currentPosition = position;
-        _locationMessage =
-            'Latitude: ${position.latitude}, Longitude: ${position.longitude}';
-
-        if (position.speed < 0.1) {
-          Vibration.vibrate();
-        }
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _positionStreamSubscription.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('GPS'),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'Informations GPS',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              _locationMessage,
-              style: TextStyle(fontSize: 16),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _startLocationUpdates,
-              child: const Text('Obtenir la localisation'),
-            ),
-            const SizedBox(height: 20),
-            if (_currentPosition != null) ...[
-              Text('Altitude: ${_currentPosition!.altitude} m'),
-              Text('Vitesse: ${_currentPosition!.speed} m/s'),
-              Text('Précision: ${_currentPosition!.accuracy} m'),
-            ],
-            const SizedBox(height: 40),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text('Retour au jeu'),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

@@ -36,6 +36,8 @@ class _GamePageState extends State<GamePage> {
   int _score = 0;
   bool _gameStarted = false;
   List<Map<String, dynamic>> _players = [];
+  bool _isRoundActive = false;
+  int _countdownValue = 5;
 
   @override
   void initState() {
@@ -130,23 +132,33 @@ class _GamePageState extends State<GamePage> {
     socket.on('start_game', (_) {
       setState(() {
         _gameStarted = true;
-        _statusMessage = 'Le jeu a commencé';
+        _statusMessage = 'Le jeu va commencer !';
+      });
+    });
+
+    socket.on('countdown', (data) {
+      setState(() {
+        _countdownValue = data['count'];
+        _statusMessage = 'La manche commence dans $_countdownValue secondes...';
+        _isRoundActive = false;
       });
     });
 
     socket.on('new_round', (data) {
       setState(() {
         _currentRound = data['round_actuel'];
-        _instruction = data['position'];
+        _instruction = _getInstructionText(data['position']);
         _players = List<Map<String, dynamic>>.from(data['joueurs']);
         _statusMessage = 'Nouvelle manche: $_currentRound';
         _isStable = true;
+        _isRoundActive = true;
       });
     });
 
     socket.on('player_moved', (data) {
       setState(() {
         _statusMessage = '${data['player']} a bougé !';
+        _isRoundActive = false;
       });
     });
 
@@ -193,7 +205,7 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _checkStability() {
-    if (!_gameStarted) return;
+    if (!_gameStarted || !_isRoundActive) return;
 
     double accelerationMagnitude = sqrt(pow(_accelerometerData['x']!, 2) +
         pow(_accelerometerData['y']!, 2) +
@@ -218,42 +230,26 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _checkMovement() {
-    if (!_gameStarted || _currentPosition == null) return;
+    if (!_gameStarted || !_isRoundActive || _currentPosition == null) return;
 
     if (_currentPosition!.speed > 0.5) {
       socket.emit('player_moved', {'player': widget.playerName, 'moved': true});
     }
   }
 
-  void _showGameOverDialog(String perdant) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Game Over'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Le perdant: $perdant'),
-              const SizedBox(height: 10),
-              Text('Scores:'),
-              ..._players.map(
-                  (player) => Text('${player['nom']}: ${player['score']}')),
-            ],
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('OK'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop(); // Return to the welcome page
-              },
-            ),
-          ],
-        );
-      },
-    );
+  String _getInstructionText(String position) {
+    switch (position) {
+      case 'verticale':
+        return 'Tenez votre téléphone verticalement !';
+      case 'horizontale':
+        return 'Tenez votre téléphone horizontalement !';
+      case 'diagonale':
+        return 'Tenez votre téléphone en diagonale !';
+      case 'selfie':
+        return 'Prenez la pose pour un selfie !';
+      default:
+        return 'Préparez-vous...';
+    }
   }
 
   @override
@@ -287,7 +283,7 @@ class _GamePageState extends State<GamePage> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Round: $_currentRound',
+                  'Manche: $_currentRound',
                   style: const TextStyle(fontSize: 18),
                 ),
                 const SizedBox(height: 20),
@@ -313,24 +309,62 @@ class _GamePageState extends State<GamePage> {
                       border: Border.all(color: Colors.black, width: 2),
                     ),
                   ),
-                  Positioned(
-                    left: 100 + bubbleX,
-                    top: 100 - bubbleY,
-                    child: Container(
-                      width: 20,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: _isStable ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
+                  if (_isRoundActive)
+                    Positioned(
+                      left: 100 + bubbleX,
+                      top: 100 - bubbleY,
+                      child: Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: _isStable ? Colors.green : Colors.red,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
-                  ),
+                  if (!_isRoundActive)
+                    Text(
+                      '$_countdownValue',
+                      style:
+                          TextStyle(fontSize: 72, fontWeight: FontWeight.bold),
+                    ),
                 ],
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  void _showGameOverDialog(String perdant) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Fin de la partie'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Le perdant: $perdant'),
+              const SizedBox(height: 10),
+              Text('Scores finaux:'),
+              ..._players.map(
+                  (player) => Text('${player['nom']}: ${player['score']}')),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('OK'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Retour à la page d'accueil
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 

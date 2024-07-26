@@ -38,6 +38,9 @@ class _GamePageState extends State<GamePage> {
   bool _gameStarted = false;
   List<Map<String, dynamic>> _players = [];
 
+  bool _isReplaying = false;
+  bool _gameEnded = false;
+
   @override
   void initState() {
     super.initState();
@@ -154,20 +157,41 @@ class _GamePageState extends State<GamePage> {
     socket.on('end_game', (data) {
       setState(() {
         _gameStarted = false;
+        _gameEnded = true;
         _players = List<Map<String, dynamic>>.from(data['joueurs']);
         _statusMessage = 'The game is over';
         _showGameOverDialog(data['perdant']);
       });
     });
 
-    socket.onDisconnect((_) {
+    socket.on('replay_state', (data) {
       setState(() {
-        _statusMessage = 'Disconnected from server';
+        _currentRound = data['round_actuel'];
+        _instruction = data['position'];
+        _players = List<Map<String, dynamic>>.from(data['joueurs']);
+        _statusMessage = 'Replaying Round: $_currentRound';
+        _isReplaying = true;
       });
-      _stopSendingData();
+    });
+
+    socket.on('replay_ended', (_) {
+      setState(() {
+        _isReplaying = false;
+        _statusMessage = 'Replay ended';
+      });
+    });
+
+    socket.on('replay_unavailable', (message) {
+      setState(() {
+        _statusMessage = message;
+      });
     });
 
     socket.connect();
+  }
+
+  void _requestReplay() {
+    socket.emit('request_replay');
   }
 
   void _startSendingData() {
@@ -204,10 +228,8 @@ class _GamePageState extends State<GamePage> {
         pow(_gyroscopeData['y']!, 2) +
         pow(_gyroscopeData['z']!, 2));
 
-    // Increased tolerance for stability
     bool newIsStable = accelerationMagnitude < 11.0 && gyroscopeMagnitude < 0.2;
 
-    // Improved orientation detection with increased tolerance
     bool newIsInPosition = false;
     if (_instruction == "verticale") {
       newIsInPosition = (_accelerometerData['z']!.abs() > 8.5 &&
@@ -267,7 +289,14 @@ class _GamePageState extends State<GamePage> {
           ),
           actions: <Widget>[
             TextButton(
-              child: const Text('OK'),
+              child: const Text('Replay'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _requestReplay();
+              },
+            ),
+            TextButton(
+              child: const Text('Exit'),
               onPressed: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).pop(); // Return to the welcome page
@@ -284,6 +313,13 @@ class _GamePageState extends State<GamePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Stable Hand Game'),
+        actions: [
+          if (_gameEnded && !_isReplaying)
+            IconButton(
+              icon: Icon(Icons.replay),
+              onPressed: _requestReplay,
+            ),
+        ],
       ),
       body: Column(
         children: [

@@ -29,9 +29,10 @@ class _GamePageState extends State<GamePage> {
   Map<String, double> _accelerometerData = {'x': 0.0, 'y': 0.0, 'z': 0.0};
   Map<String, double> _gyroscopeData = {'x': 0.0, 'y': 0.0, 'z': 0.0};
   Position? _currentPosition;
-  String _instruction = 'En attente des instructions...';
-  String _statusMessage = 'Préparez-vous...';
-  bool _isStable = true;
+  String _instruction = 'Waiting for instructions...';
+  String _statusMessage = 'Get Ready...';
+  bool _isStable = false;
+  bool _isInPosition = false;
   int _currentRound = 0;
   int _score = 0;
   bool _gameStarted = false;
@@ -50,14 +51,14 @@ class _GamePageState extends State<GamePage> {
       setState(() {
         _accelerometerData = {'x': event.x, 'y': event.y, 'z': event.z};
       });
-      _checkStability();
+      _checkStabilityAndPosition();
     });
 
     _gyroscopeSubscription = gyroscopeEvents.listen((event) {
       setState(() {
         _gyroscopeData = {'x': event.x, 'y': event.y, 'z': event.z};
       });
-      _checkStability();
+      _checkStabilityAndPosition();
     });
   }
 
@@ -68,7 +69,7 @@ class _GamePageState extends State<GamePage> {
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       setState(() {
-        _statusMessage = 'Les services de localisation sont désactivés.';
+        _statusMessage = 'Location services are disabled.';
       });
       return;
     }
@@ -78,7 +79,7 @@ class _GamePageState extends State<GamePage> {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         setState(() {
-          _statusMessage = 'Les permissions de localisation sont refusées.';
+          _statusMessage = 'Location permissions are denied.';
         });
         return;
       }
@@ -86,8 +87,7 @@ class _GamePageState extends State<GamePage> {
 
     if (permission == LocationPermission.deniedForever) {
       setState(() {
-        _statusMessage =
-            'Les permissions de localisation sont définitivement refusées.';
+        _statusMessage = 'Location permissions are permanently denied.';
       });
       return;
     }
@@ -115,7 +115,7 @@ class _GamePageState extends State<GamePage> {
 
     socket.onConnect((_) {
       setState(() {
-        _statusMessage = 'Connecté au serveur';
+        _statusMessage = 'Connected to server';
       });
       _startSendingData();
       socket.emit('join_game', {'playerName': widget.playerName});
@@ -130,7 +130,7 @@ class _GamePageState extends State<GamePage> {
     socket.on('start_game', (_) {
       setState(() {
         _gameStarted = true;
-        _statusMessage = 'Le jeu a commencé';
+        _statusMessage = 'The game has started';
       });
     });
 
@@ -139,14 +139,15 @@ class _GamePageState extends State<GamePage> {
         _currentRound = data['round_actuel'];
         _instruction = data['position'];
         _players = List<Map<String, dynamic>>.from(data['joueurs']);
-        _statusMessage = 'Nouvelle manche: $_currentRound';
-        _isStable = true;
+        _statusMessage = 'New Round: $_currentRound';
+        _isStable = false;
+        _isInPosition = false;
       });
     });
 
     socket.on('player_moved', (data) {
       setState(() {
-        _statusMessage = '${data['player']} a bougé !';
+        _statusMessage = '${data['player']} moved!';
       });
     });
 
@@ -154,14 +155,14 @@ class _GamePageState extends State<GamePage> {
       setState(() {
         _gameStarted = false;
         _players = List<Map<String, dynamic>>.from(data['joueurs']);
-        _statusMessage = 'Le jeu est terminé';
+        _statusMessage = 'The game is over';
         _showGameOverDialog(data['perdant']);
       });
     });
 
     socket.onDisconnect((_) {
       setState(() {
-        _statusMessage = 'Déconnecté du serveur';
+        _statusMessage = 'Disconnected from server';
       });
       _stopSendingData();
     });
@@ -192,7 +193,7 @@ class _GamePageState extends State<GamePage> {
     _dataSendTimer?.cancel();
   }
 
-  void _checkStability() {
+  void _checkStabilityAndPosition() {
     if (!_gameStarted) return;
 
     double accelerationMagnitude = sqrt(pow(_accelerometerData['x']!, 2) +
@@ -203,14 +204,36 @@ class _GamePageState extends State<GamePage> {
         pow(_gyroscopeData['y']!, 2) +
         pow(_gyroscopeData['z']!, 2));
 
-    bool newIsStable = accelerationMagnitude < 10.5 && gyroscopeMagnitude < 0.1;
+    // Increased tolerance for stability
+    bool newIsStable = accelerationMagnitude < 11.0 && gyroscopeMagnitude < 0.2;
 
-    if (newIsStable != _isStable) {
+    // Improved orientation detection with increased tolerance
+    bool newIsInPosition = false;
+    if (_instruction == "verticale") {
+      newIsInPosition = (_accelerometerData['z']!.abs() > 8.5 &&
+          _accelerometerData['x']!.abs() < 1.5 &&
+          _accelerometerData['y']!.abs() < 1.5);
+    } else if (_instruction == "horizontale") {
+      newIsInPosition = (_accelerometerData['y']!.abs() > 8.5 &&
+          _accelerometerData['x']!.abs() < 1.5 &&
+          _accelerometerData['z']!.abs() < 1.5);
+    } else if (_instruction == "diagonale") {
+      newIsInPosition = (_accelerometerData['x']!.abs() > 5.5 &&
+          _accelerometerData['y']!.abs() > 5.5 &&
+          _accelerometerData['z']!.abs() < 2.5);
+    } else if (_instruction == "selfie") {
+      newIsInPosition = (_accelerometerData['x']!.abs() > 7.5 &&
+          _accelerometerData['y']!.abs() < 2.5 &&
+          _accelerometerData['z']!.abs() < 2.5);
+    }
+
+    if (newIsStable != _isStable || newIsInPosition != _isInPosition) {
       setState(() {
         _isStable = newIsStable;
+        _isInPosition = newIsInPosition;
       });
 
-      if (!_isStable) {
+      if (!_isStable || !_isInPosition) {
         socket.emit(
             'player_moved', {'player': widget.playerName, 'stable': false});
       }
@@ -235,7 +258,7 @@ class _GamePageState extends State<GamePage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Le perdant: $perdant'),
+              Text('The loser: $perdant'),
               const SizedBox(height: 10),
               Text('Scores:'),
               ..._players.map(
@@ -258,9 +281,6 @@ class _GamePageState extends State<GamePage> {
 
   @override
   Widget build(BuildContext context) {
-    double bubbleX = _accelerometerData['x']! * 10;
-    double bubbleY = _accelerometerData['y']! * 10;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Stable Hand Game'),
@@ -282,7 +302,9 @@ class _GamePageState extends State<GamePage> {
                   _statusMessage,
                   style: TextStyle(
                       fontSize: 20,
-                      color: _isStable ? Colors.green : Colors.red),
+                      color: _isStable && _isInPosition
+                          ? Colors.green
+                          : Colors.red),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 20),
@@ -302,30 +324,14 @@ class _GamePageState extends State<GamePage> {
           ),
           Expanded(
             child: Center(
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.black, width: 2),
-                    ),
-                  ),
-                  Positioned(
-                    left: 100 + bubbleX,
-                    top: 100 - bubbleY,
-                    child: Container(
-                      width: 20,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: _isStable ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ],
+              child: CustomPaint(
+                size: Size(300, 300),
+                painter: OrientationPainter(
+                  accelerometerData: _accelerometerData,
+                  instruction: _instruction,
+                  isStable: _isStable,
+                  isInPosition: _isInPosition,
+                ),
               ),
             ),
           ),
@@ -343,5 +349,94 @@ class _GamePageState extends State<GamePage> {
     socket.dispose();
     _stopSendingData();
     super.dispose();
+  }
+}
+
+class OrientationPainter extends CustomPainter {
+  final Map<String, double> accelerometerData;
+  final String instruction;
+  final bool isStable;
+  final bool isInPosition;
+
+  OrientationPainter({
+    required this.accelerometerData,
+    required this.instruction,
+    required this.isStable,
+    required this.isInPosition,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.blue
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 10;
+
+    // Draw circle
+    canvas.drawCircle(center, radius, paint);
+
+    // Draw crosshair
+    canvas.drawLine(Offset(center.dx - 10, center.dy),
+        Offset(center.dx + 10, center.dy), paint);
+    canvas.drawLine(Offset(center.dx, center.dy - 10),
+        Offset(center.dx, center.dy + 10), paint);
+
+    // Draw bubble
+    final bubblePaint = Paint()
+      ..color = isStable && isInPosition ? Colors.green : Colors.red
+      ..style = PaintingStyle.fill;
+
+    final bubbleRadius = 15.0;
+    final bubbleX = center.dx + accelerometerData['x']! * (radius / 10);
+    final bubbleY = center.dy - accelerometerData['y']! * (radius / 10);
+    canvas.drawCircle(Offset(bubbleX, bubbleY), bubbleRadius, bubblePaint);
+
+    // Draw target zone with increased tolerance
+    final targetPaint = Paint()
+      ..color = Colors.green.withOpacity(0.3)
+      ..style = PaintingStyle.fill;
+
+    final toleranceWidth = size.width * 0.3; // Increased from 0.2
+    final toleranceHeight = size.height * 0.3; // Increased from 0.2
+
+    if (instruction == 'verticale') {
+      canvas.drawRect(
+          Rect.fromCenter(
+              center: Offset(center.dx, size.height * 0.1),
+              width: toleranceWidth,
+              height: toleranceHeight),
+          targetPaint);
+    } else if (instruction == 'horizontale') {
+      canvas.drawRect(
+          Rect.fromCenter(
+              center: Offset(size.width * 0.1, center.dy),
+              width: toleranceWidth,
+              height: toleranceHeight),
+          targetPaint);
+    } else if (instruction == 'diagonale') {
+      canvas.drawRect(
+          Rect.fromCenter(
+              center: Offset(size.width * 0.2, size.height * 0.2),
+              width: toleranceWidth,
+              height: toleranceHeight),
+          targetPaint);
+    } else if (instruction == 'selfie') {
+      // Adjusted selfie position to be more intuitive
+      canvas.drawRect(
+          Rect.fromCenter(
+              center: Offset(size.width * 0.8,
+                  size.height * 0.2), // Changed from center.dx and 0.9
+              width: toleranceWidth,
+              height: toleranceHeight),
+          targetPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    return true;
   }
 }
